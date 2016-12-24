@@ -8,7 +8,7 @@
  * This program is free software; you can redistribute it and/or modify it under
  * the terms of the GNU General Public License, version 3.0, as published by the
  * Free Software Foundation.
- * 
+ *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
@@ -42,20 +42,29 @@
 #include "smsdk_ext.h"
 #include "context.h"
 
-struct socket_write_t {
-	AsyncSocketContext *ctx;
-	uv_buf_t* buf;
+struct CAsyncAddJob
+{
+	uv_async_cb CallbackFn;
+	void *pData;
 };
 
-struct socket_data_t {
-	AsyncSocketContext *ctx;
-	char* buf;
-	ssize_t size;
+struct CAsyncWrite
+{
+	CAsyncSocketContext *pAsyncContext;
+	uv_buf_t *pBuffer;
 };
 
-struct error_data_t {
-	AsyncSocketContext *ctx;
-	int err;
+struct CSocketData
+{
+	CAsyncSocketContext *pAsyncContext;
+	char *pBuffer;
+	ssize_t BufferSize;
+};
+
+struct CSocketError
+{
+	CAsyncSocketContext *pAsyncContext;
+	int Error;
 };
 
 /**
@@ -74,7 +83,7 @@ public:
 	 * @return			True to succeed loading, false to fail.
 	 */
 	virtual bool SDK_OnLoad(char *error, size_t maxlength, bool late);
-	
+
 	/**
 	 * @brief This is called right before the extension is unloaded.
 	 */
@@ -135,7 +144,7 @@ public:
 public:
 	HandleType_t socketHandleType;
 
-	AsyncSocketContext* GetSocketInstanceByHandle(Handle_t handle);
+	CAsyncSocketContext* GetSocketInstanceByHandle(Handle_t handle);
 public:
 	void OnHandleDestroy(HandleType_t type, void *object);
 };

@@ -1,91 +1,86 @@
 #include "context.h"
 
-AsyncSocketContext::AsyncSocketContext(IPluginContext* pContext) {
-	this->pContext = pContext;
+CAsyncSocketContext::CAsyncSocketContext(IPluginContext *pContext)
+{
+	this->m_pContext = pContext;
 
+	socket = NULL;
 	stream = NULL;
 
-	connectCallback = NULL;
-	errorCallback = NULL;
-	dataCallback = NULL;
+	m_pConnectCallback = NULL;
+	m_pErrorCallback = NULL;
+	m_pDataCallback = NULL;
 }
 
-AsyncSocketContext::~AsyncSocketContext() {
-	if (connect_req != NULL) {
-		free(connect_req);
-	}
+CAsyncSocketContext::~CAsyncSocketContext()
+{
+	if(socket != NULL)
+		uv_close((uv_handle_t *)socket, NULL);
 
-	if (socket != NULL) {
-		uv_close((uv_handle_t *) socket, NULL);
-	}
+	if(m_pConnectCallback)
+		forwards->ReleaseForward(m_pConnectCallback);
 
-	if (connectCallback) {
-		forwards->ReleaseForward(connectCallback);
-	}
+	if(m_pErrorCallback)
+		forwards->ReleaseForward(m_pErrorCallback);
 
-	if (errorCallback) {
-		forwards->ReleaseForward(errorCallback);
-	}
-
-	if (dataCallback) {
-		forwards->ReleaseForward(dataCallback);
-	}
+	if(m_pDataCallback)
+		forwards->ReleaseForward(m_pDataCallback);
 }
 
-void AsyncSocketContext::Connected() {
-	if (!connectCallback) {
+void CAsyncSocketContext::Connected()
+{
+	if(!m_pConnectCallback)
 		return;
-	}
 
-	connectCallback->PushCell(hndl);
-    connectCallback->Execute(NULL);
+	m_pConnectCallback->PushCell(m_Handle);
+    m_pConnectCallback->Execute(NULL);
 }
 
-void AsyncSocketContext::OnError(int error) {
-	if (!errorCallback) {
+void CAsyncSocketContext::OnError(int error)
+{
+	if(!m_pErrorCallback)
 		return;
-	}
 
-	errorCallback->PushCell(hndl);
-	errorCallback->PushCell(error);
-	errorCallback->PushString(uv_err_name(error));
-	errorCallback->Execute(NULL);
+	m_pErrorCallback->PushCell(m_Handle);
+	m_pErrorCallback->PushCell(error);
+	m_pErrorCallback->PushString(uv_err_name(error));
+	m_pErrorCallback->Execute(NULL);
 }
 
-void AsyncSocketContext::OnData(char* data, ssize_t size) {
-	if (!dataCallback) {
+void CAsyncSocketContext::OnData(char* data, ssize_t size)
+{
+	if(!m_pDataCallback)
 		return;
-	}
 
-	dataCallback->PushCell(hndl);
-	dataCallback->PushString(data);
-	dataCallback->PushCell(size);
-    dataCallback->Execute(NULL);
+	m_pDataCallback->PushCell(m_Handle);
+	m_pDataCallback->PushString(data);
+	m_pDataCallback->PushCell(size);
+    m_pDataCallback->Execute(NULL);
 }
 
-bool AsyncSocketContext::SetConnectCallback(funcid_t function) {
-	if (connectCallback) {
-		forwards->ReleaseForward(connectCallback);
-	}
-	
-	connectCallback = forwards->CreateForwardEx(NULL, ET_Single, 1, NULL, Param_Cell);
-	return connectCallback->AddFunction(pContext, function);
+bool CAsyncSocketContext::SetConnectCallback(funcid_t function)
+{
+	if(m_pConnectCallback)
+		forwards->ReleaseForward(m_pConnectCallback);
+
+	m_pConnectCallback = forwards->CreateForwardEx(NULL, ET_Single, 1, NULL, Param_Cell);
+	return m_pConnectCallback->AddFunction(m_pContext, function);
 }
 
-bool AsyncSocketContext::SetErrorCallback(funcid_t function) {
-	if (connectCallback) {
-		forwards->ReleaseForward(errorCallback);
-	}
+bool CAsyncSocketContext::SetErrorCallback(funcid_t function)
+{
+	if(m_pConnectCallback)
+		forwards->ReleaseForward(m_pErrorCallback);
 
-	errorCallback = forwards->CreateForwardEx(NULL, ET_Single, 3, NULL, Param_Cell, Param_Cell, Param_String);
-	return errorCallback->AddFunction(pContext, function);
+	m_pErrorCallback = forwards->CreateForwardEx(NULL, ET_Single, 3, NULL, Param_Cell, Param_Cell, Param_String);
+	return m_pErrorCallback->AddFunction(m_pContext, function);
 }
 
-bool AsyncSocketContext::SetDataCallback(funcid_t function) {
-	if (dataCallback) {
-		forwards->ReleaseForward(dataCallback);
-	}
-	
-	dataCallback = forwards->CreateForwardEx(NULL, ET_Single, 3, NULL, Param_Cell, Param_String, Param_Cell);
-	return dataCallback->AddFunction(pContext, function);
+bool CAsyncSocketContext::SetDataCallback(funcid_t function)
+{
+	if(m_pDataCallback)
+		forwards->ReleaseForward(m_pDataCallback);
+
+	m_pDataCallback = forwards->CreateForwardEx(NULL, ET_Single, 3, NULL, Param_Cell, Param_String, Param_Cell);
+	return m_pDataCallback->AddFunction(m_pContext, function);
 }

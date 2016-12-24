@@ -8,7 +8,7 @@
  * This program is free software; you can redistribute it and/or modify it under
  * the terms of the GNU General Public License, version 3.0, as published by the
  * Free Software Foundation.
- * 
+ *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
@@ -30,8 +30,8 @@
  */
 
 #include "extension.h"
-#include "queue.h"
 #include "context.h"
+#include "readerwriterqueue.h"
 #include <uv.h>
 
 /**
@@ -39,277 +39,190 @@
  * @brief Implement extension code here.
  */
 
-LockedQueue<AsyncSocketContext*> g_connect_queue;
-LockedQueue<socket_data_t*> g_data_queue;
-LockedQueue<error_data_t*> g_error_queue;
+moodycamel::ReaderWriterQueue<CAsyncSocketContext *> g_ConnectQueue;
+moodycamel::ReaderWriterQueue<CSocketError *> g_ErrorQueue;
+moodycamel::ReaderWriterQueue<CSocketData *> g_DataQueue;
 
-uv_loop_t *loop;
+uv_loop_t *g_UV_Loop;
+uv_thread_t g_UV_LoopThread;
 
-uv_thread_t loop_thread;
-
-uv_async_t g_async_resolve;
-uv_async_t g_async_write;
+uv_async_t g_UV_AsyncAdded;
+moodycamel::ReaderWriterQueue<CAsyncAddJob> g_AsyncAddQueue;
 
 AsyncSocket g_AsyncSocket;		/**< Global singleton for extension's main interface */
 
 SMEXT_LINK(&g_AsyncSocket);
 
-void push_error(AsyncSocketContext *ctx, int error);
-
-AsyncSocketContext* AsyncSocket::GetSocketInstanceByHandle(Handle_t handle) {
+CAsyncSocketContext *AsyncSocket::GetSocketInstanceByHandle(Handle_t handle)
+{
 	HandleSecurity sec;
 	sec.pOwner = NULL;
 	sec.pIdentity = myself->GetIdentity();
-	
-	AsyncSocketContext *client;
 
-	if (handlesys->ReadHandle(handle, socketHandleType, &sec, (void**)&client) != HandleError_None)
+	CAsyncSocketContext *pContext;
+
+	if(handlesys->ReadHandle(handle, socketHandleType, &sec, (void **)&pContext) != HandleError_None)
 		return NULL;
 
-	return client;
+	return pContext;
 }
 
-void AsyncSocket::OnHandleDestroy(HandleType_t type, void *object) {
-	if(object != NULL) {
-		AsyncSocketContext *ctx = (AsyncSocketContext *) object;
-
-		delete ctx;
+void AsyncSocket::OnHandleDestroy(HandleType_t type, void *object)
+{
+	if(object != NULL)
+	{
+		CAsyncSocketContext *pContext = (CAsyncSocketContext *)object;
+		delete pContext;
 	}
 }
 
-void OnGameFrame(bool simulating) {
-	if (!g_connect_queue.Empty()) {
-		g_connect_queue.Lock();
-		while(!g_connect_queue.Empty()) {
-			g_connect_queue.Pop()->Connected();
-		}
-		g_connect_queue.Unlock();
+void OnGameFrame(bool simulating)
+{
+	CAsyncSocketContext *pContext;
+	while(g_ConnectQueue.try_dequeue(pContext))
+	{
+		pContext->Connected();
 	}
 
-	if (!g_error_queue.Empty()) {
-		g_error_queue.Lock();
-		while(!g_error_queue.Empty()) {
-			error_data_t *err = g_error_queue.Pop();
+	CSocketError *pError;
+	while(g_ErrorQueue.try_dequeue(pError))
+	{
+		pError->pAsyncContext->OnError(pError->Error);
 
-			err->ctx->OnError(err->err);
-
-			free(err);
-		}
-		g_error_queue.Unlock();
+		free(pError);
 	}
 
-	if (!g_data_queue.Empty()) {
-		g_data_queue.Lock();
-		while(!g_data_queue.Empty()) {
-			socket_data_t *data = g_data_queue.Pop();
+	CSocketData *pData;
+	while(g_DataQueue.try_dequeue(pData))
+	{
+		pData->pAsyncContext->OnData(pData->pBuffer, pData->BufferSize);
 
-			data->ctx->OnData(data->buf, data->size);
+		free(pData->pBuffer);
+		free(pData);
+	}
+}
 
-			free(data->buf);
-			free(data);
-		}
-		g_data_queue.Unlock();
+void UV_OnAsyncAdded(uv_async_t *pHandle)
+{
+	CAsyncAddJob Job;
+	while(g_AsyncAddQueue.try_dequeue(Job))
+	{
+		uv_async_t *pAsync = (uv_async_t *)malloc(sizeof(uv_async_t));
+		uv_async_init(g_UV_Loop, pAsync, Job.CallbackFn);
+		pAsync->data = Job.pData;
+		uv_async_send(pAsync);
 	}
 }
 
 // main event loop thread
-void EventLoop(void* data) {
-	uv_run(loop, UV_RUN_DEFAULT);
+void UV_EventLoop(void *data)
+{
+	uv_run(g_UV_Loop, UV_RUN_DEFAULT);
 }
 
-void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
-	buf->base = (char*) malloc(suggested_size);
+void UV_AllocBuffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
+{
+	buf->base = (char *)malloc(suggested_size);
 	buf->len = suggested_size;
 }
 
-void on_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
-	if (nread < 0) {
-		push_error((AsyncSocketContext*) client->data, nread);
-		// Should we decide to close the socket? For now let's let the plugin handle errors, including EOF.
+void UV_HandleCleanup(uv_handle_t *handle)
+{
+	free(handle);
+}
+
+void UV_PushError(CAsyncSocketContext *pContext, int error)
+{
+	CSocketError *pError = (CSocketError *)malloc(sizeof(CSocketError));
+
+	pError->pAsyncContext = pContext;
+	pError->Error = error;
+
+	g_ErrorQueue.enqueue(pError);
+}
+
+void UV_OnRead(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
+{
+	CAsyncSocketContext *pContext = (CAsyncSocketContext *)client->data;
+	if(nread < 0)
+	{
+		// Connection closed
+		uv_close((uv_handle_t *)client, NULL);
+		pContext->socket = NULL;
+
+		UV_PushError((CAsyncSocketContext *)client->data, nread);
 		return;
 	}
 
-	char *data = (char*) malloc(sizeof(char) * (nread+1));
-	data[nread] = '\0';
+	char *data = (char *)malloc(sizeof(char) * (nread + 1));
+	data[nread] = 0;
 	strncpy(data, buf->base, nread);
 
-	socket_data_t *s = (socket_data_t *) malloc(sizeof(socket_data_t));
+	CSocketData *pData = (CSocketData *)malloc(sizeof(CSocketData));
+	pData->pAsyncContext = pContext;
+	pData->pBuffer = data;
+	pData->BufferSize = nread;
 
-	s->ctx = static_cast<AsyncSocketContext*>(client->data);
-	s->buf = data;
-	s->size = nread;
-
-	g_data_queue.Lock();
-	g_data_queue.Push(s);
-	g_data_queue.Unlock();
+	g_DataQueue.enqueue(pData);
 
 	free(buf->base);
 }
 
-void on_connect(uv_connect_t *req, int status) {
-	AsyncSocketContext *ctx = (AsyncSocketContext*) req->data;
+void UV_OnConnect(uv_connect_t *req, int status)
+{
+	CAsyncSocketContext *pContext = (CAsyncSocketContext *)req->data;
 
-	if (status < 0) {
-		push_error(ctx, status);
+	if(status < 0)
+	{
+		UV_PushError(pContext, status);
 		return;
 	}
 
-	ctx->connect_req = NULL;
-	ctx->stream = req->handle;
+	pContext->stream = req->handle;
 
-	g_connect_queue.Lock();
-	g_connect_queue.Push(ctx);
-	g_connect_queue.Unlock();
+	g_ConnectQueue.enqueue(pContext);
 
 	req->handle->data = req->data;
+	free(req);
 
-	uv_read_start(ctx->stream, alloc_buffer, on_read);
+	uv_read_start(pContext->stream, UV_AllocBuffer, UV_OnRead);
 }
 
-void push_error(AsyncSocketContext *ctx, int error) {
-	error_data_t *err = (error_data_t*) malloc(sizeof(error_data_t));
+void UV_OnAsyncResolved(uv_getaddrinfo_t *resolver, int status, struct addrinfo *res)
+{
+	free(resolver->service);
+	CAsyncSocketContext *pContext = (CAsyncSocketContext *) resolver->data;
 
-	err->ctx = ctx;
-	err->err = error;
-
-	g_error_queue.Lock();
-	g_error_queue.Push(err);
-	g_error_queue.Unlock();
-}
-
-void on_resolved(uv_getaddrinfo_t *resolver, int status, struct addrinfo *res) {
-	AsyncSocketContext *ctx = (AsyncSocketContext *) resolver->data;
-
-	if (status < 0) {
-		push_error(ctx, status);
+	if(status < 0)
+	{
+		UV_PushError(pContext, status);
 		return;
 	}
 
-	uv_connect_t *connect_req = (uv_connect_t*) malloc(sizeof(uv_connect_t));
-	uv_tcp_t *socket = (uv_tcp_t*) malloc(sizeof(uv_tcp_t));
+	uv_connect_t *connect_req = (uv_connect_t *)malloc(sizeof(uv_connect_t));
+	uv_tcp_t *socket = (uv_tcp_t *)malloc(sizeof(uv_tcp_t));
 
-	ctx->connect_req = connect_req;
-	ctx->socket = socket;
+	pContext->socket = socket;
+	connect_req->data = pContext;
 
-	connect_req->data = ctx;
+	char addr[32] = {0};
+	uv_ip4_name((struct sockaddr_in *)res->ai_addr, addr, sizeof(addr));
 
-	char addr[17] = {'\0'};
-	uv_ip4_name((struct sockaddr_in*) res->ai_addr, addr, 16);
-
-	uv_tcp_init(loop, socket);
-
-	uv_tcp_connect(connect_req, socket, (const struct sockaddr*) res->ai_addr, on_connect);
+	uv_tcp_init(g_UV_Loop, socket);
+	uv_tcp_connect(connect_req, socket, (const struct sockaddr*) res->ai_addr, UV_OnConnect);
 
 	uv_freeaddrinfo(res);
 }
 
-cell_t Socket_Create(IPluginContext *pContext, const cell_t *params) {
-	AsyncSocketContext *ctx = new AsyncSocketContext(pContext);
+void UV_OnAsyncResolve(uv_async_t *handle)
+{
+	CAsyncSocketContext *pAsyncContext = (CAsyncSocketContext *)handle->data;
+	uv_close((uv_handle_t *)handle, UV_HandleCleanup);
 
-	ctx->hndl = handlesys->CreateHandle(g_AsyncSocket.socketHandleType, ctx, pContext->GetIdentity(), myself->GetIdentity(), NULL);
+	pAsyncContext->resolver.data = pAsyncContext;
 
-	return ctx->hndl;
-}
-
-cell_t Socket_Connect(IPluginContext *pContext, const cell_t *params) {
-	AsyncSocketContext *ctx = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
-
-	if (ctx == NULL) {
-		return pContext->ThrowNativeError("Invalid socket handle");
-	}
-
-	if (params[3] < 0 || params[3] > 65535) {
-		return pContext->ThrowNativeError("Invalid port specified");
-	}
-	
-	char *address = NULL;
-	pContext->LocalToString(params[2], &address);
-
-	ctx->host = address;
-	ctx->port = params[3];
-
-	g_async_resolve.data = ctx;
-	uv_async_send(&g_async_resolve);
-
-	return 1;
-}
-
-cell_t Socket_Write(IPluginContext *pContext, const cell_t *params) {
-	AsyncSocketContext *ctx = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
-
-	if (ctx == NULL) {
-		return pContext->ThrowNativeError("Invalid socket handle");
-	}
-
-	char *data = NULL;
-	pContext->LocalToString(params[2], &data);
-
-	uv_buf_t* buffer = (uv_buf_t *) malloc(sizeof(uv_buf_t));
-
-	buffer->base = strdup(data);
-	buffer->len = strlen(data);
-
-	socket_write_t *write = (socket_write_t *) malloc(sizeof(socket_write_t));
-
-	write->ctx = ctx;
-	write->buf = buffer;
-
-	g_async_write.data = write;
-	uv_async_send(&g_async_write);
-
-	return 1;
-}
-
-cell_t Socket_SetConnectCallback(IPluginContext *pContext, const cell_t *params) {
-	AsyncSocketContext *ctx = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
-
-	if (ctx == NULL) {
-		return pContext->ThrowNativeError("Invalid socket handle");
-	}
-
-	if (!ctx->SetConnectCallback(params[2])) {
-		return pContext->ThrowNativeError("Invalid callback");
-	}
-
-	return true;
-}
-
-cell_t Socket_SetErrorCallback(IPluginContext *pContext, const cell_t *params) {
-	AsyncSocketContext *ctx = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
-
-	if (ctx == NULL) {
-		return pContext->ThrowNativeError("Invalid socket handle");
-	}
-
-	if (!ctx->SetErrorCallback(params[2])) {
-		return pContext->ThrowNativeError("Invalid callback");
-	}
-
-	return true;
-}
-
-cell_t Socket_SetDataCallback(IPluginContext *pContext, const cell_t *params) {
-	AsyncSocketContext *ctx = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
-
-	if (ctx == NULL) {
-		return pContext->ThrowNativeError("Invalid socket handle");
-	}
-
-	if (!ctx->SetDataCallback(params[2])) {
-		return pContext->ThrowNativeError("Invalid callback");
-	}
-
-	return true;
-}
-
-void async_resolve(uv_async_t *handle) {
-	AsyncSocketContext *ctx = static_cast<AsyncSocketContext *>(handle->data);
-
-	ctx->resolver.data = ctx;
-	
-	char *service = (char *) malloc(sizeof(char) * 6);
-
-	sprintf(service, "%d", ctx->port);
+	char *service = (char *)malloc(8);
+	sprintf(service, "%d", pAsyncContext->m_Port);
 
 	struct addrinfo hints;
 	hints.ai_family = PF_INET;
@@ -317,47 +230,151 @@ void async_resolve(uv_async_t *handle) {
 	hints.ai_protocol = IPPROTO_TCP;
 	hints.ai_flags = 0;
 
-	int r = uv_getaddrinfo(loop, &ctx->resolver, on_resolved, ctx->host, service, &hints);
-
-	if (r) {
-		push_error(ctx, r);
-	}
+	int err = uv_getaddrinfo(g_UV_Loop, &pAsyncContext->resolver, UV_OnAsyncResolved, pAsyncContext->m_pHost, service, &hints);
+	if(err)
+		UV_PushError(pAsyncContext, err);
 }
 
-void async_write_cb(uv_write_t* req, int status) {
-	socket_write_t *data = (socket_write_t *) req->data;
+void UV_OnAsyncWriteCleanup(uv_write_t *req, int status)
+{
+	CAsyncWrite *pWrite = (CAsyncWrite *)req->data;
 
-	if (data->buf->base) {
-		free(data->buf->base);
-	}
-
-	free(data->buf);
-
-	free(data);
-
+	free(pWrite->pBuffer->base);
+	free(pWrite->pBuffer);
+	free(pWrite);
 	free(req);
 }
 
-void async_write(uv_async_t *handle) {
-	socket_write_t *data = (socket_write_t *) handle->data;
+void UV_OnAsyncWrite(uv_async_t *handle)
+{
+	CAsyncWrite *pWrite = (CAsyncWrite *)handle->data;
+	uv_close((uv_handle_t *)handle, UV_HandleCleanup);
 
-	if (data == NULL || data->buf == NULL) {
+	if(pWrite == NULL || pWrite->pBuffer == NULL)
+		return;
+
+	if(pWrite->pAsyncContext == NULL || pWrite->pAsyncContext->stream == NULL)
+	{
+		free(pWrite->pBuffer->base);
+		free(pWrite->pBuffer);
+		free(pWrite);
 		return;
 	}
 
-	if (data->ctx == NULL || data->ctx->stream == NULL) {
-		return;
-	}
+	uv_write_t *req = (uv_write_t *)malloc(sizeof(uv_write_t));
+	req->data = pWrite;
 
-	uv_write_t* req = (uv_write_t *) malloc(sizeof(uv_write_t));
+	uv_write(req, pWrite->pAsyncContext->stream, pWrite->pBuffer, 1, UV_OnAsyncWriteCleanup);
+}
 
-	req->data = data;
+cell_t Native_AsyncSocket_Create(IPluginContext *pContext, const cell_t *params)
+{
+	CAsyncSocketContext *pAsyncContext = new CAsyncSocketContext(pContext);
 
-	uv_write(req, data->ctx->stream, data->buf, 1, async_write_cb);
+	pAsyncContext->m_Handle = handlesys->CreateHandle(g_AsyncSocket.socketHandleType, pAsyncContext,
+		pContext->GetIdentity(), myself->GetIdentity(), NULL);
+
+	return pAsyncContext->m_Handle;
+}
+
+cell_t Native_AsyncSocket_Connect(IPluginContext *pContext, const cell_t *params)
+{
+	CAsyncSocketContext *pAsyncContext = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
+
+	if(pAsyncContext == NULL)
+		return pContext->ThrowNativeError("Invalid socket handle");
+
+	if(params[3] < 0 || params[3] > 65535)
+		return pContext->ThrowNativeError("Invalid port specified");
+
+	char *address = NULL;
+	pContext->LocalToString(params[2], &address);
+
+	pAsyncContext->m_pHost = address;
+	pAsyncContext->m_Port = params[3];
+
+	CAsyncAddJob Job;
+	Job.CallbackFn = UV_OnAsyncResolve;
+	Job.pData = pAsyncContext;
+	g_AsyncAddQueue.enqueue(Job);
+
+	uv_async_send(&g_UV_AsyncAdded);
+
+	return 1;
+}
+
+cell_t Native_AsyncSocket_Write(IPluginContext *pContext, const cell_t *params)
+{
+	CAsyncSocketContext *pAsyncContext = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
+
+	if(pAsyncContext == NULL)
+		return pContext->ThrowNativeError("Invalid socket handle");
+
+	char *data = NULL;
+	pContext->LocalToString(params[2], &data);
+
+	uv_buf_t* buffer = (uv_buf_t *)malloc(sizeof(uv_buf_t));
+
+	buffer->base = strdup(data);
+	buffer->len = strlen(data);
+
+	CAsyncWrite *pWrite = (CAsyncWrite *)malloc(sizeof(CAsyncWrite));
+
+	pWrite->pAsyncContext = pAsyncContext;
+	pWrite->pBuffer = buffer;
+
+	CAsyncAddJob Job;
+	Job.CallbackFn = UV_OnAsyncWrite;
+	Job.pData = pWrite;
+	g_AsyncAddQueue.enqueue(Job);
+
+	uv_async_send(&g_UV_AsyncAdded);
+
+	return 1;
+}
+
+cell_t Native_AsyncSocket_SetConnectCallback(IPluginContext *pContext, const cell_t *params)
+{
+	CAsyncSocketContext *pAsyncContext = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
+
+	if(pAsyncContext == NULL)
+		return pContext->ThrowNativeError("Invalid socket handle");
+
+	if(!pAsyncContext->SetConnectCallback(params[2]))
+		return pContext->ThrowNativeError("Invalid callback");
+
+	return true;
+}
+
+cell_t Native_AsyncSocket_SetErrorCallback(IPluginContext *pContext, const cell_t *params)
+{
+	CAsyncSocketContext *pAsyncContext = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
+
+	if(pAsyncContext == NULL)
+		return pContext->ThrowNativeError("Invalid socket handle");
+
+	if(!pAsyncContext->SetErrorCallback(params[2]))
+		return pContext->ThrowNativeError("Invalid callback");
+
+	return true;
+}
+
+cell_t Native_AsyncSocket_SetDataCallback(IPluginContext *pContext, const cell_t *params)
+{
+	CAsyncSocketContext *pAsyncContext = g_AsyncSocket.GetSocketInstanceByHandle(params[1]);
+
+	if(pAsyncContext == NULL)
+		return pContext->ThrowNativeError("Invalid socket handle");
+
+	if(!pAsyncContext->SetDataCallback(params[2]))
+		return pContext->ThrowNativeError("Invalid callback");
+
+	return true;
 }
 
 // Sourcemod Plugin Events
-bool AsyncSocket::SDK_OnLoad(char *error, size_t maxlength, bool late) {
+bool AsyncSocket::SDK_OnLoad(char *error, size_t maxlength, bool late)
+{
 	sharesys->AddNatives(myself, AsyncSocketNatives);
 	sharesys->RegisterLibrary(myself, "async_socket");
 
@@ -365,32 +382,34 @@ bool AsyncSocket::SDK_OnLoad(char *error, size_t maxlength, bool late) {
 
 	smutils->AddGameFrameHook(OnGameFrame);
 
-	loop = uv_default_loop();
+	g_UV_Loop = uv_default_loop();
 
-	uv_async_init(loop, &g_async_resolve, async_resolve);
-	uv_async_init(loop, &g_async_write, async_write);
+	uv_async_init(g_UV_Loop, &g_UV_AsyncAdded, UV_OnAsyncAdded);
 
-	uv_thread_create(&loop_thread, EventLoop, NULL);
-	
+	uv_thread_create(&g_UV_LoopThread, UV_EventLoop, NULL);
+
 	return true;
 }
 
-void AsyncSocket::SDK_OnUnload() {
+void AsyncSocket::SDK_OnUnload()
+{
 	handlesys->RemoveType(socketHandleType, NULL);
 
-	uv_thread_join(&loop_thread);
+	uv_close((uv_handle_t *)&g_UV_AsyncAdded, NULL);
 
-	uv_loop_close(loop);
+	uv_thread_join(&g_UV_LoopThread);
+
+	uv_loop_close(g_UV_Loop);
 
 	smutils->RemoveGameFrameHook(OnGameFrame);
 }
 
 const sp_nativeinfo_t AsyncSocketNatives[] = {
-	{"AsyncSocket.AsyncSocket", Socket_Create},
-	{"AsyncSocket.Connect", Socket_Connect},
-	{"AsyncSocket.Write", Socket_Write},
-	{"AsyncSocket.SetConnectCallback", Socket_SetConnectCallback},
-	{"AsyncSocket.SetErrorCallback", Socket_SetErrorCallback},
-	{"AsyncSocket.SetDataCallback", Socket_SetDataCallback},
+	{"AsyncSocket.AsyncSocket", Native_AsyncSocket_Create},
+	{"AsyncSocket.Connect", Native_AsyncSocket_Connect},
+	{"AsyncSocket.Write", Native_AsyncSocket_Write},
+	{"AsyncSocket.SetConnectCallback", Native_AsyncSocket_SetConnectCallback},
+	{"AsyncSocket.SetErrorCallback", Native_AsyncSocket_SetErrorCallback},
+	{"AsyncSocket.SetDataCallback", Native_AsyncSocket_SetDataCallback},
 	{NULL, NULL}
 };

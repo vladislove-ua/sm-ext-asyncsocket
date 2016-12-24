@@ -6,32 +6,31 @@
 
 #include "smsdk_ext.h"
 
-class AsyncSocketContext {
+class CAsyncSocketContext
+{
 public:
-    IPluginContext* pContext;
+    IPluginContext *m_pContext;
+	Handle_t m_Handle;
 
-	Handle_t hndl;
+	char *m_pHost;
+	int m_Port;
 
-	char* host;
-	int port;
-
-    IChangeableForward *connectCallback;
-	IChangeableForward *errorCallback;
-	IChangeableForward *dataCallback;
+    IChangeableForward *m_pConnectCallback;
+	IChangeableForward *m_pErrorCallback;
+	IChangeableForward *m_pDataCallback;
 
 	uv_getaddrinfo_t resolver;
-	uv_connect_t* connect_req;
-	uv_tcp_t* socket;
-	uv_stream_t* stream;
+	uv_tcp_t *socket;
+	uv_stream_t *stream;
 
-    AsyncSocketContext(IPluginContext* plugin);
-    ~AsyncSocketContext();
-	
+    CAsyncSocketContext(IPluginContext *plugin);
+    ~CAsyncSocketContext();
+
 	void Connected();
 
 	void OnError(int error);
 
-	void OnData(char* data, ssize_t size);
+	void OnData(char *data, ssize_t size);
 
 	bool SetConnectCallback(funcid_t function);
 	bool SetErrorCallback(funcid_t function);
