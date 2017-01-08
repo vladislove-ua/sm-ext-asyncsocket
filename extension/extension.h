@@ -50,22 +50,46 @@ struct CAsyncAddJob
 
 struct CAsyncWrite
 {
-	CAsyncSocketContext *pAsyncContext;
+	CAsyncSocketContext *pSocketContext;
 	uv_buf_t *pBuffer;
+};
+
+struct CSocketConnect
+{
+	CAsyncSocketContext *pSocketContext;
+	uv_stream_t *pClientSocket;
 };
 
 struct CSocketData
 {
-	CAsyncSocketContext *pAsyncContext;
+	CAsyncSocketContext *pSocketContext;
 	char *pBuffer;
 	ssize_t BufferSize;
 };
 
 struct CSocketError
 {
-	CAsyncSocketContext *pAsyncContext;
+	CAsyncSocketContext *pSocketContext;
 	int Error;
 };
+
+void UV_EventLoop(void *data);
+void UV_OnAsyncAdded(uv_async_t *pHandle);
+void UV_FreeHandle(uv_handle_t *handle);
+void UV_AllocBuffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf);
+void UV_Quit(uv_async_t *pHandle);
+void UV_DeleteAsyncContext(uv_async_t *pHandle);
+void UV_PushError(CAsyncSocketContext *pContext, int error);
+void UV_OnRead(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf);
+void UV_OnConnect(uv_connect_t *req, int status);
+void UV_StartRead(uv_async_t *pHandle);
+void UV_OnNewConnection(uv_stream_t *server, int status);
+void UV_OnAsyncResolved(uv_getaddrinfo_t *resolver, int status, struct addrinfo *res);
+void UV_OnAsyncResolve(uv_async_t *handle);
+void UV_OnAsyncWriteCleanup(uv_write_t *req, int status);
+void UV_OnAsyncWrite(uv_async_t *handle);
+void UV_OnWalk(uv_handle_t *pHandle, void *pArg);
+
 
 /**
  * @brief Sample implementation of the SDK Extension.

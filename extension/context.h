@@ -12,6 +12,11 @@ public:
     IPluginContext *m_pContext;
 	Handle_t m_Handle;
 
+	bool m_Deleted;
+	bool m_PendingCallback;
+	bool m_Pending;
+	bool m_Server;
+
 	char *m_pHost;
 	int m_Port;
 
@@ -19,14 +24,15 @@ public:
 	IChangeableForward *m_pErrorCallback;
 	IChangeableForward *m_pDataCallback;
 
-	uv_getaddrinfo_t resolver;
-	uv_tcp_t *socket;
-	uv_stream_t *stream;
+	uv_getaddrinfo_t m_Resolver;
+	uv_tcp_t *m_pSocket;
+	uv_stream_t *m_pStream;
 
     CAsyncSocketContext(IPluginContext *plugin);
     ~CAsyncSocketContext();
 
 	void Connected();
+	void OnConnect(CAsyncSocketContext *pSocketContext);
 
 	void OnError(int error);
 

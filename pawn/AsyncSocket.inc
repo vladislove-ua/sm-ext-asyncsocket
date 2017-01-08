@@ -1,10 +1,7 @@
-/*
-**
-*/
-#if defined _async_socket_included
+#if defined _AsyncSocket_included
  #endinput
 #endif
-#define _async_socket_included
+#define _AsyncSocket_included
 
 typedef AsyncSocketConnectCallback = function void(AsyncSocket socket);
 
@@ -14,31 +11,27 @@ typedef AsyncSocketDataCallback = function void(AsyncSocket socket, const char[]
 
 methodmap AsyncSocket < Handle {
 	public native AsyncSocket();
-	
+
 	public native bool Connect(const char[] host, const int port);
-	
+
+	public native bool Listen(const char[] host, const int port);
+
 	public native bool Write(const char[] data);
-	
+
 	public native bool SetConnectCallback(AsyncSocketConnectCallback callback);
-	
+
 	public native bool SetErrorCallback(AsyncSocketErrorCallback callback);
-	
+
 	public native bool SetDataCallback(AsyncSocketDataCallback callback);
 }
 
-/*
-#if !defined REQUIRE_EXTENSIONS
-public __ext_INTERFACE_SetNTVOptional()
+/**
+ * Do not edit below this line!
+ */
+public Extension __ext_AsyncSocket =
 {
-	MarkNativeAsOptional("");
-}
-#endif
-*/
-
-public Extension __ext_INTERFACE = 
-{
-	name = "async_socket",
-	file = "async_socket.ext",
+	name = "AsyncSocket",
+	file = "AsyncSocket.ext",
 #if defined AUTOLOAD_EXTENSIONS
 	autoload = 1,
 #else
@@ -50,3 +43,16 @@ public Extension __ext_INTERFACE =
 	required = 0,
 #endif
 };
+
+#if !defined REQUIRE_EXTENSIONS
+public __ext_AsyncSocket_SetNTVOptional()
+{
+	MarkNativeAsOptional("AsyncSocket.AsyncSocket");
+	MarkNativeAsOptional("AsyncSocket.Connect");
+	MarkNativeAsOptional("AsyncSocket.Listen");
+	MarkNativeAsOptional("AsyncSocket.Write");
+	MarkNativeAsOptional("AsyncSocket.SetConnectCallback");
+	MarkNativeAsOptional("AsyncSocket.SetErrorCallback");
+	MarkNativeAsOptional("AsyncSocket.SetDataCallback");
+}
+#endif

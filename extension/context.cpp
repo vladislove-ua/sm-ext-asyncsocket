@@ -1,11 +1,20 @@
+#include "extension.h"
 #include "context.h"
 
 CAsyncSocketContext::CAsyncSocketContext(IPluginContext *pContext)
 {
-	this->m_pContext = pContext;
+	m_pContext = pContext;
 
-	socket = NULL;
-	stream = NULL;
+	m_pHost = NULL;
+	m_Port = -1;
+
+	m_Deleted = false;
+	m_PendingCallback = false;
+	m_Pending = false;
+	m_Server = false;
+
+	m_pSocket = NULL;
+	m_pStream = NULL;
 
 	m_pConnectCallback = NULL;
 	m_pErrorCallback = NULL;
@@ -14,8 +23,8 @@ CAsyncSocketContext::CAsyncSocketContext(IPluginContext *pContext)
 
 CAsyncSocketContext::~CAsyncSocketContext()
 {
-	if(socket != NULL)
-		uv_close((uv_handle_t *)socket, NULL);
+	if(m_pHost)
+		free(m_pHost);
 
 	if(m_pConnectCallback)
 		forwards->ReleaseForward(m_pConnectCallback);
@@ -25,19 +34,35 @@ CAsyncSocketContext::~CAsyncSocketContext()
 
 	if(m_pDataCallback)
 		forwards->ReleaseForward(m_pDataCallback);
+
+	m_Deleted = true;
 }
 
+// Client
 void CAsyncSocketContext::Connected()
 {
+	m_PendingCallback = false;
 	if(!m_pConnectCallback)
 		return;
 
 	m_pConnectCallback->PushCell(m_Handle);
-    m_pConnectCallback->Execute(NULL);
+	m_pConnectCallback->Execute(NULL);
+}
+
+// Server
+void CAsyncSocketContext::OnConnect(CAsyncSocketContext *pSocketContext)
+{
+	m_PendingCallback = false;
+	if(!m_pConnectCallback)
+		return;
+
+	m_pConnectCallback->PushCell(pSocketContext->m_Handle);
+	m_pConnectCallback->Execute(NULL);
 }
 
 void CAsyncSocketContext::OnError(int error)
 {
+	m_PendingCallback = false;
 	if(!m_pErrorCallback)
 		return;
 
@@ -49,13 +74,14 @@ void CAsyncSocketContext::OnError(int error)
 
 void CAsyncSocketContext::OnData(char* data, ssize_t size)
 {
+	m_PendingCallback = false;
 	if(!m_pDataCallback)
 		return;
 
 	m_pDataCallback->PushCell(m_Handle);
 	m_pDataCallback->PushString(data);
 	m_pDataCallback->PushCell(size);
-    m_pDataCallback->Execute(NULL);
+	m_pDataCallback->Execute(NULL);
 }
 
 bool CAsyncSocketContext::SetConnectCallback(funcid_t function)

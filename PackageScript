@@ -1,4 +1,4 @@
-# vim: set ts=8 sts=2 sw=2 tw=99 et ft=python: 
+# vim: set ts=8 sts=2 sw=2 tw=99 et ft=python:
 import os
 
 builder.SetBuildFolder('package')
@@ -27,4 +27,4 @@ def CopyFiles(src, dest, files):
     source_path = os.path.join(builder.sourcePath, src, source_file)
     builder.AddCopy(source_path, dest_entry)
 
-CopyFiles('pawn', 'addons/sourcemod/scripting/include', ['async_socket.inc'])
+CopyFiles('pawn', 'addons/sourcemod/scripting/include', ['AsyncSocket.inc'])
