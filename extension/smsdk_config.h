@@ -8,7 +8,7 @@
  * This program is free software; you can redistribute it and/or modify it under
  * the terms of the GNU General Public License, version 3.0, as published by the
  * Free Software Foundation.
- * 
+ *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
@@ -40,14 +40,14 @@
 /* Basic information exposed publicly */
 #define SMEXT_CONF_NAME			"Async Socket Extension"
 #define SMEXT_CONF_DESCRIPTION	"Async TCP server and client"
-#define SMEXT_CONF_VERSION		"0.1"
+#define SMEXT_CONF_VERSION		"1.0"
 #define SMEXT_CONF_AUTHOR		"Nikki + BotoX"
 #define SMEXT_CONF_URL			"https://github.com/CSSZombieEscape/sm-ext-AsyncSocket"
 #define SMEXT_CONF_LOGTAG		"ASYNCSOCKET"
 #define SMEXT_CONF_LICENSE		"GPL"
 #define SMEXT_CONF_DATESTRING	__DATE__
 
-/** 
+/**
  * @brief Exposes plugin's main interface.
  */
 #define SMEXT_LINK(name) SDKExtension *g_pExtensionIface = name;

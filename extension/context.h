@@ -9,7 +9,7 @@
 class CAsyncSocketContext
 {
 public:
-    IPluginContext *m_pContext;
+	IPluginContext *m_pContext;
 	Handle_t m_Handle;
 
 	bool m_Deleted;
@@ -20,7 +20,7 @@ public:
 	char *m_pHost;
 	int m_Port;
 
-    IChangeableForward *m_pConnectCallback;
+	IChangeableForward *m_pConnectCallback;
 	IChangeableForward *m_pErrorCallback;
 	IChangeableForward *m_pDataCallback;
 
@@ -28,8 +28,8 @@ public:
 	uv_tcp_t *m_pSocket;
 	uv_stream_t *m_pStream;
 
-    CAsyncSocketContext(IPluginContext *plugin);
-    ~CAsyncSocketContext();
+	CAsyncSocketContext(IPluginContext *plugin);
+	~CAsyncSocketContext();
 
 	void Connected();
 	void OnConnect(CAsyncSocketContext *pSocketContext);

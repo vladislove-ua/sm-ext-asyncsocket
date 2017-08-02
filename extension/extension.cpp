@@ -49,7 +49,6 @@ uv_thread_t g_UV_LoopThread;
 uv_async_t g_UV_AsyncAdded;
 moodycamel::ReaderWriterQueue<CAsyncAddJob> g_AsyncAddQueue;
 
-int g_MallocHandles = 0;
 bool g_Running;
 AsyncSocket g_AsyncSocket;		/**< Global singleton for extension's main interface */
 
@@ -78,7 +77,6 @@ void AsyncSocket::OnHandleDestroy(HandleType_t type, void *object)
 
 		if(g_Running && (pSocketContext->m_pSocket || pSocketContext->m_pStream || pSocketContext->m_PendingCallback))
 		{
-			printf("Delete: Async\n");
 			CAsyncAddJob Job;
 			Job.CallbackFn = UV_DeleteAsyncContext;
 			Job.pData = pSocketContext;
@@ -88,7 +86,6 @@ void AsyncSocket::OnHandleDestroy(HandleType_t type, void *object)
 		}
 		else
 		{
-			printf("Delete: Now\n");
 			delete pSocketContext;
 		}
 	}
@@ -99,10 +96,8 @@ void OnGameFrame(bool simulating)
 	CSocketConnect *pConnect;
 	while(g_ConnectQueue.try_dequeue(pConnect))
 	{
-		printf("g_ConnectQueue got: ");
 		if(pConnect->pSocketContext->m_Server)
 		{
-			printf("server\n");
 			CAsyncSocketContext *pSocketContext = new CAsyncSocketContext(pConnect->pSocketContext->m_pContext);
 			pSocketContext->m_Handle = handlesys->CreateHandle(g_AsyncSocket.socketHandleType, pSocketContext,
 				pConnect->pSocketContext->m_pContext->GetIdentity(), myself->GetIdentity(), NULL);
@@ -114,7 +109,6 @@ void OnGameFrame(bool simulating)
 
 			if(!pSocketContext->m_Deleted)
 			{
-				printf("add UV_StartRead\n");
 				CAsyncAddJob Job;
 				Job.CallbackFn = UV_StartRead;
 				Job.pData = pSocketContext;
@@ -125,7 +119,6 @@ void OnGameFrame(bool simulating)
 		}
 		else
 		{
-			printf("client\n");
 			pConnect->pSocketContext->Connected();
 		}
 
@@ -161,9 +154,7 @@ void UV_OnAsyncAdded(uv_async_t *pHandle)
 	CAsyncAddJob Job;
 	while(g_AsyncAddQueue.try_dequeue(Job))
 	{
-		printf("dequeing job\n");
 		uv_async_t *pAsync = (uv_async_t *)malloc(sizeof(uv_async_t));
-		g_MallocHandles++;
 		uv_async_init(g_UV_Loop, pAsync, Job.CallbackFn);
 		pAsync->data = Job.pData;
 		pAsync->close_cb = UV_FreeHandle;
@@ -173,9 +164,7 @@ void UV_OnAsyncAdded(uv_async_t *pHandle)
 
 void UV_FreeHandle(uv_handle_t *handle)
 {
-	printf("freeing %p\n", handle);
 	free(handle);
-	g_MallocHandles--;
 }
 
 void UV_AllocBuffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
@@ -186,7 +175,6 @@ void UV_AllocBuffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 
 void UV_Quit(uv_async_t *pHandle)
 {
-	printf("quithandle: %p\n", pHandle);
 	uv_close((uv_handle_t *)pHandle, pHandle->close_cb);
 
 	uv_close((uv_handle_t *)&g_UV_AsyncAdded, NULL);
@@ -198,12 +186,14 @@ void UV_DeleteAsyncContext(uv_async_t *pHandle)
 {
 	CAsyncSocketContext *pSocketContext = (CAsyncSocketContext *)pHandle->data;
 	uv_close((uv_handle_t *)pHandle, pHandle->close_cb);
+
 	if(pSocketContext->m_pStream)
 	{
 		uv_close((uv_handle_t *)pSocketContext->m_pStream, pSocketContext->m_pStream->close_cb);
 		pSocketContext->m_pStream = NULL;
 		pSocketContext->m_pSocket = NULL;
 	}
+
 	if(pSocketContext->m_pSocket)
 	{
 		uv_close((uv_handle_t *)pSocketContext->m_pSocket, pSocketContext->m_pSocket->close_cb);
@@ -226,11 +216,9 @@ void UV_PushError(CAsyncSocketContext *pSocketContext, int error)
 
 void UV_OnRead(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 {
-	printf("UV_OnRead()\n");
 	CAsyncSocketContext *pSocketContext = (CAsyncSocketContext *)client->data;
 	if(pSocketContext->m_Deleted)
 	{
-		printf("m_Deleted\n");
 		free(buf->base);
 		uv_close((uv_handle_t *)client, client->close_cb);
 		pSocketContext->m_pStream = NULL;
@@ -240,7 +228,6 @@ void UV_OnRead(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 
 	if(nread < 0)
 	{
-		printf("nread < 0\n");
 		// Connection closed
 		free(buf->base);
 		// But let the client disconnect.
@@ -251,9 +238,8 @@ void UV_OnRead(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
 		UV_PushError(pSocketContext, nread);
 		return;
 	}
-	pSocketContext->m_PendingCallback = true;
 
-	printf("nread = %d\n", nread);
+	pSocketContext->m_PendingCallback = true;
 
 	char *data = (char *)malloc(sizeof(char) * (nread + 1));
 	data[nread] = 0;
@@ -284,6 +270,7 @@ void UV_OnConnect(uv_connect_t *req, int status)
 		UV_PushError(pSocketContext, status);
 		return;
 	}
+
 	pSocketContext->m_PendingCallback = true;
 
 	pSocketContext->m_pStream = req->handle;
@@ -300,35 +287,27 @@ void UV_OnConnect(uv_connect_t *req, int status)
 
 void UV_StartRead(uv_async_t *pHandle)
 {
-	printf("UV_StartRead()\n");
 	CAsyncSocketContext *pSocketContext = (CAsyncSocketContext *)pHandle->data;
 	uv_close((uv_handle_t *)pHandle, pHandle->close_cb);
 
 	if(pSocketContext->m_Deleted || !pSocketContext->m_pStream)
-	{
-		printf("UV_StartRead() -> error\n");
 		return;
-	}
 
-	int err = uv_read_start(pSocketContext->m_pStream, UV_AllocBuffer, UV_OnRead);
-	printf("~UV_StartRead() = %d %s\n", err, uv_err_name(err));
+	uv_read_start(pSocketContext->m_pStream, UV_AllocBuffer, UV_OnRead);
 }
 
 void UV_OnNewConnection(uv_stream_t *server, int status)
 {
-	printf("UV_OnNewConnection()\n");
 	// server context
 	CAsyncSocketContext *pSocketContext = (CAsyncSocketContext *)server->data;
 	if(pSocketContext->m_Deleted)
 	{
-		printf("m_Deleted()\n");
 		uv_close((uv_handle_t *)server, server->close_cb);
 		return;
 	}
 
 	if(status < 0)
 	{
-		printf("status < 0\n");
 		uv_close((uv_handle_t *)server, server->close_cb);
 		//uv_close((uv_handle_t *)pSocketContext->m_pSocket, pSocketContext->m_pSocket->close_cb);
 		UV_PushError(pSocketContext, status);
@@ -336,13 +315,11 @@ void UV_OnNewConnection(uv_stream_t *server, int status)
 	}
 
 	uv_tcp_t *pClientSocket = (uv_tcp_t *)malloc(sizeof(uv_tcp_t));
-	g_MallocHandles++;
 	uv_tcp_init(g_UV_Loop, pClientSocket);
 	pClientSocket->close_cb = UV_FreeHandle;
 
 	if(uv_accept((uv_stream_t *)pSocketContext->m_pSocket, (uv_stream_t *)pClientSocket) == 0)
 	{
-		printf("accepted\n");
 		pSocketContext->m_PendingCallback = true;
 		CSocketConnect *pConnect = (CSocketConnect *)malloc(sizeof(CSocketConnect));
 		pConnect->pSocketContext = pSocketContext;
@@ -351,7 +328,6 @@ void UV_OnNewConnection(uv_stream_t *server, int status)
 	}
 	else
 	{
-		printf("accept failed\n");
 		uv_close((uv_handle_t *)pClientSocket, pClientSocket->close_cb);
 	}
 }
@@ -376,11 +352,7 @@ void UV_OnAsyncResolved(uv_getaddrinfo_t *resolver, int status, struct addrinfo 
 		return;
 	}
 
-	uv_connect_t *pConnectReq = (uv_connect_t *)malloc(sizeof(uv_connect_t));
-	pConnectReq->data = pSocketContext;
-
 	uv_tcp_t *pSocket = (uv_tcp_t *)malloc(sizeof(uv_tcp_t));
-	g_MallocHandles++;
 	uv_tcp_init(g_UV_Loop, pSocket);
 	pSocket->close_cb = UV_FreeHandle;
 	pSocket->data = pSocketContext;
@@ -390,22 +362,21 @@ void UV_OnAsyncResolved(uv_getaddrinfo_t *resolver, int status, struct addrinfo 
 
 	if(pSocketContext->m_Server)
 	{
-		printf("new server\n");
 		uv_tcp_bind(pSocket, (const struct sockaddr *)res->ai_addr, 0);
 
 		int err = uv_listen((uv_stream_t *)pSocket, 32, UV_OnNewConnection);
 		if(err)
 		{
-			printf("yes, new server\n");
-			uv_freeaddrinfo(res);
 			uv_close((uv_handle_t *)pSocket, pSocket->close_cb);
+			pSocketContext->m_pSocket = NULL;
 			UV_PushError(pSocketContext, err);
-			return;
 		}
 	}
 	else
 	{
-		printf("connect client\n");
+		uv_connect_t *pConnectReq = (uv_connect_t *)malloc(sizeof(uv_connect_t));
+		pConnectReq->data = pSocketContext;
+
 		uv_tcp_connect(pConnectReq, pSocket, (const struct sockaddr *)res->ai_addr, UV_OnConnect);
 	}
 
@@ -452,7 +423,6 @@ void UV_OnAsyncWriteCleanup(uv_write_t *req, int status)
 
 void UV_OnAsyncWrite(uv_async_t *handle)
 {
-	printf("Write 1\n");
 	CAsyncWrite *pWrite = (CAsyncWrite *)handle->data;
 	uv_close((uv_handle_t *)handle, handle->close_cb);
 
@@ -470,7 +440,6 @@ void UV_OnAsyncWrite(uv_async_t *handle)
 	uv_write_t *req = (uv_write_t *)malloc(sizeof(uv_write_t));
 	req->data = pWrite;
 
-	printf("Write 2\n");
 	uv_write(req, pWrite->pSocketContext->m_pStream, pWrite->pBuffer, 1, UV_OnAsyncWriteCleanup);
 }
 
@@ -563,12 +532,18 @@ cell_t Native_AsyncSocket_Write(IPluginContext *pContext, const cell_t *params)
 		return pContext->ThrowNativeError("Socket is not connected");
 
 	char *data = NULL;
-	pContext->LocalToString(params[2], &data);
+	pContext->LocalToPhysAddr(params[2], (cell_t **)&data);
 
-	uv_buf_t* buffer = (uv_buf_t *)malloc(sizeof(uv_buf_t));
+	uv_buf_t *buffer = (uv_buf_t *)malloc(sizeof(uv_buf_t));
 
-	buffer->base = strdup(data);
-	buffer->len = strlen(data);
+	if(params[3] >= 0)
+		buffer->len = params[3];
+	else
+		buffer->len = strlen(data);
+
+	buffer->base = (char *)malloc(buffer->len + 1);
+	memcpy(buffer->base, data, buffer->len + 1);
+	buffer->base[buffer->len] = 0;
 
 	CAsyncWrite *pWrite = (CAsyncWrite *)malloc(sizeof(CAsyncWrite));
 
@@ -628,7 +603,6 @@ cell_t Native_AsyncSocket_SetDataCallback(IPluginContext *pContext, const cell_t
 bool AsyncSocket::SDK_OnLoad(char *error, size_t maxlength, bool late)
 {
 	g_Running = true;
-	g_MallocHandles = 0;
 	sharesys->AddNatives(myself, AsyncSocketNatives);
 	sharesys->RegisterLibrary(myself, "AsyncSocket");
 
@@ -672,7 +646,6 @@ void AsyncSocket::SDK_OnUnload()
 	uv_loop_close(g_UV_Loop);
 
 	smutils->RemoveGameFrameHook(OnGameFrame);
-	printf("g_MallocHandles = %d\n", g_MallocHandles);
 }
 
 const sp_nativeinfo_t AsyncSocketNatives[] = {

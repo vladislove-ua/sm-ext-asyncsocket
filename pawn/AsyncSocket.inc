@@ -16,7 +16,7 @@ methodmap AsyncSocket < Handle {
 
 	public native bool Listen(const char[] host, const int port);
 
-	public native bool Write(const char[] data);
+	public native bool Write(const char[] data, int length = -1);
 
 	public native bool SetConnectCallback(AsyncSocketConnectCallback callback);
 
