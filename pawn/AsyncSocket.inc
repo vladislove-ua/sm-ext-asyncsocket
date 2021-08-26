@@ -18,6 +18,11 @@ methodmap AsyncSocket < Handle {
 
 	public native bool Write(const char[] data, int length = -1);
 
+	public bool WriteNull(const char[] data)
+	{
+		this.Write(data, strlen(data) + 1);
+	}
+
 	public native bool SetConnectCallback(AsyncSocketConnectCallback callback);
 
 	public native bool SetErrorCallback(AsyncSocketErrorCallback callback);
