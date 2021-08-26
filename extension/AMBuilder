@@ -1,30 +1,56 @@
 # vim: set sts=2 ts=8 sw=2 tw=99 et ft=python:
 import os
 
-binary = builder.compiler.Library('AsyncSocket.ext')
-AsyncSocket.ConfigureForExtension(builder, binary.compiler)
+projectName = 'AsyncSocket'
 
-binary.compiler.includes += [
-  os.path.join(builder.sourcePath, 'extension', 'libuv', 'include')
-]
+for cxx in builder.targets:
+  for sdk_name in SM.sdks:
+    sdk = SM.sdks[sdk_name]
 
-binary.sources += [
-  'extension.cpp',
-  'context.cpp',
-  os.path.join(AsyncSocket.sm_root, 'public', 'smsdk_ext.cpp')
-]
+    if not cxx.target.arch in sdk.platformSpec[cxx.target.platform]:
+      continue
 
-binary.compiler.defines += [
-  'SOURCEMOD_BUILD'
-]
+    sdk.ext = "." + sdk.ext
+    if "sdk2013" in sdk.ext:
+      sdk.ext = ""
 
-binary.compiler.postlink += [
-  os.path.join(builder.sourcePath, 'extension', 'libuv', 'libuv.a')
-]
+    binary = SM.HL2Library(builder, cxx, projectName + ".ext" + sdk.ext, sdk)
 
-if builder.target_platform == 'windows':
-  binary.compiler.linkflags += ['ws2_32.lib']
+    binary.compiler.defines += [
+      'SOURCEMOD_BUILD',
+      'HAVE_STRING_H',
+    ]
 
-AsyncSocket.extensions += [
-  builder.Add(binary)
-]
+    if cxx.target.platform == 'linux':
+      cxx.postlink += ['-lpthread', '-lrt']
+    elif cxx.target.platform == 'mac':
+      cxx.cflags += ['-Wno-deprecated-declarations']
+      cxx.postlink += ['-framework', 'CoreServices']
+
+    if cxx.family == 'gcc' or cxx.family == 'clang':
+      cxx.cxxflags += ['-fno-rtti']
+    elif cxx.family == 'msvc':
+      cxx.cxxflags += ['/GR-']
+
+    if cxx.target.platform == 'windows':
+      binary.compiler.linkflags += ['ws2_32.lib']
+
+    binary.compiler.postlink += [
+      os.path.join(builder.sourcePath, 'extension', 'libuv', 'libuv.a')
+    ]
+
+    binary.sources += [
+      os.path.join('extension.cpp'),
+      os.path.join('context.cpp'),
+      os.path.join(SM.sm_root, 'extensions', 'sm-ext-common', 'mathstubs.c'),
+      os.path.join(SM.sm_root, 'public', 'smsdk_ext.cpp'),
+      os.path.join(SM.sm_root, 'public', 'asm', 'asm.c'),
+      os.path.join(SM.sm_root, 'public', 'libudis86', 'decode.c'),
+      os.path.join(SM.sm_root, 'public', 'libudis86', 'itab.c'),
+      os.path.join(SM.sm_root, 'public', 'libudis86', 'syn-att.c'),
+      os.path.join(SM.sm_root, 'public', 'libudis86', 'syn-intel.c'),
+      os.path.join(SM.sm_root, 'public', 'libudis86', 'syn.c'),
+      os.path.join(SM.sm_root, 'public', 'libudis86', 'udis86.c'),
+    ]
+
+    SM.extensions += [builder.Add(binary)]
