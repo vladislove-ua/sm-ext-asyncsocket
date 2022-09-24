@@ -28,6 +28,8 @@ parser.options.add_argument('--mms-path', type=str, dest='mms_path', default=Non
                        help='Path to Metamod:Source')
 parser.options.add_argument('--sm-path', type=str, dest='sm_path', default=None,
                        help='Path to SourceMod')
+parser.options.add_argument('--libuv-path', type=str, dest='libuv_path', default=None,
+                       help='Path to libuv')
 parser.options.add_argument('--enable-debug', action='store_const', const='1', dest='debug',
                        help='Enable debugging symbols')
 parser.options.add_argument('--enable-optimize', action='store_const', const='1', dest='opt',
@@ -39,7 +41,3 @@ parser.options.add_argument('--targets', type=str, dest='targets', default=None,
 		                      help="Override the target architecture (use commas to separate multiple targets).")
 
 parser.Configure()
-
-# Run libuv compilation and copy files to corresponding folders
-os.chmod('../build_libuv.sh', 0o755)
-subprocess.call("../build_libuv.sh")

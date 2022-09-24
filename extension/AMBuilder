@@ -36,7 +36,7 @@ for cxx in builder.targets:
       binary.compiler.linkflags += ['ws2_32.lib']
 
     binary.compiler.postlink += [
-      os.path.join(builder.sourcePath, 'extension', 'libuv', 'libuv.a')
+      os.path.join(SM.libuv_root, '.libs', 'libuv.a'),
     ]
 
     binary.sources += [

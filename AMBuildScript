@@ -30,11 +30,6 @@ class SDK(object):
 WinOnly = ['windows']
 WinLinux = ['windows', 'linux']
 WinLinuxMac = ['windows', 'linux', 'mac']
-CSGO = {
-  'windows': ['x86'],
-  'linux': ['x86', 'x86_64'],
-  'mac': ['x86_64']
-}
 
 PossibleSDKs = {
   'sdk2013': SDK('HL2SDK2013', '2.sdk2013', '9', 'SDK2013', WinLinuxMac, 'sdk2013'),
@@ -85,6 +80,7 @@ class ExtensionConfig(object):
     self.versionlib = None
     self.all_targets = []
     self.target_archs = set()
+    self.libuv_root = None
 
 
     if builder.options.targets:
@@ -182,6 +178,22 @@ class ExtensionConfig(object):
     if not self.mms_root or not os.path.isdir(self.mms_root):
       raise Exception('Could not find a source copy of Metamod:Source')
     self.mms_root = Normalize(self.mms_root)
+
+    if builder.options.libuv_path:
+      self.libuv_root = builder.options.libuv_path
+    else:
+      self.libuv_root = ResolveEnvPath('LIBUVSOURCE144', 'libuv-1.44')
+      if not self.libuv_root:
+        self.libuv_root = ResolveEnvPath('LIBUVSOURCE_DEV', 'libuv-source')
+      if not self.libuv_root:
+        self.libuv_root = ResolveEnvPath('LIBUVSOURCE_DEV', 'libuv-central')
+      if not self.libuv_root:
+        self.libuv_root = ResolveEnvPath('LIBUVSOURCE_DEV', 'libuv')
+
+    if not self.libuv_root or not os.path.isdir(self.libuv_root):
+      raise Exception('Could not find a source copy of libuv')
+    self.libuv_root = Normalize(self.libuv_root)
+
 
   def configure(self):
     if not set(self.target_archs).issubset(['x86', 'x86_64']):
@@ -451,7 +463,7 @@ class ExtensionConfig(object):
       os.path.join(self.sm_root, 'sourcepawn', 'include'),
       os.path.join(self.sm_root, 'public', 'amtl', 'amtl'),
       os.path.join(self.sm_root, 'public', 'amtl'),
-      os.path.join(context.currentSourcePath, 'libuv', 'include'),
+      os.path.join(self.libuv_root, 'include'),
     ]
     return compiler
 
